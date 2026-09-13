@@ -45,3 +45,67 @@ The above high level architecture of a transformer is called a residual stream. 
 
 ### Virtual Weights
 
+An especially useful consequence of the residual stream being linear is that one can think of implicit virtual weights directly connecting any pairs of layers (even when those are separated by many other layers), by multiplying out their interactions through the residual stream, These virtual weights are the product of the output weights of one layer with the input weights of the other layer (i.e. $W_I^2W_O^1$) and describe the extend to which a latent layer reads in the information written by a previous layer 
+
+Since all the information is linear we can multiply through the residual streams. By using the different subspaces of the residual a layer can send different information to different layers or event not interact with other layers. 
+
+
+### Subspaces and residual stream bandwidth
+
+The residual stream is a high dimensional vector space. In small models, it may be hundreds of dimensionsl in large models it can go into tens of thousands. This means that layer can send different information to different layers by storing it in different subspaces. This is especially important in the case of attention heads, since every individual head operates on comparatively small subspaces (often 64 or 128 dimensions), and can very easily write to completely disjoint subspaces and not interact. 
+
+Once added, information presists in a subspace unless another layer actively deletes it. From this prespective, dimensions of the residual stream become something like "memory" or "bandwidth". The original token embedding as well as the unembeddings, mostly interact with a relatively small fraction of the dimensions. This leaves most dimensions "free" for the other layers to store information in. 
+
+Residual stream activation seem to be high in demand. There are generally far more "computational dimensoions" (such as neurons and attention head result dimensions) that the residual stream has dimension to move the information. Just a single MLP layer typically has 4 times more neuron than the residual stream. So at layer of 25 of 50 transformer, the residual stream has 100 times more neurons as it has dimensions before it, trying to communicate with 100 times as many neurons as it has dimensions after it, somehow communicating in superposition. We call the tensors like this "bottleneck activations" and expect them ti be unusually challenging to interpret
+
+One typical explanation provided might be: some MLP neurons and attention heads may perform a kind of "memory management" role, clearing residual stream dimension set by other layers by reading in information and writing out negative version. 
+
+### Attention heads are independent and additive
+
+The output of the attention layer is descrived as stacking multiple result layers $r^{h_1}, r^{h_2}, ...,$ and then multiplying by the output matrix $W_O^H$. If we split the output layer into multiple blocks corresponding to each head then $[W_O^{h_1}, W_O^{h_2}, ...]$. Then its observed that 
+
+$$
+W_O^H \begin{bmatrix} r^{h_1} \\ r^{h_2} \\ ... \end{bmatrix} = \begin{bmatrix} W_O^{h_1} & W_O^{h_2} & ... \end{bmatrix}\begin{bmatrix} r^{h_1} \\ r^{h_2} \\ ... \end{bmatrix} = \sum_i{W_O^{h_i} r^{h_i}}
+$$
+
+Indicating running multiple heads independently and multiplying them by its own output matrix and adding them into the input stream. The concatenation is preferred because it produces a larger and more compute efficient matrix multiply.
+
+### Attention Heads as Information Movement
+
+The fundamental action of attention heads is moving information. They read information from the residual stream of one token, and write it to the residual stream of another token. The main observation to take away from this section is that which tokens to move information from is completely separable from what information is "read" to be moved and how it is "written" to the destination. 
+
+To see this, its helpful to write the attention in a non standard way. Given an attention pattern, computing the output of an attention head is typically described in three steps
+
+1. Compute the value vector for each token from the stream ($v_i = W_vx_i$)
+2. Compute the "result vector" by linearly combining value vectors according to the attention pattern ($r_i = \sum_j{A_{i,j}v_j}$)
+3. Finally, compute the output vector of the head for each token ($h(x)_i = W_Or_i$)
+
+Each of these steps can be written as matrix multiply. Using tensor process one can define the process of applying attention as 
+
+
+$$
+h(x) = \frac{Id \otimes W_O}{\begin{array}{l}
+\text{Project result} \\  
+\text{vector out for} \\
+\text{each token} \\
+ (h(x_i) = W_o r_i)\end{array}} . \frac{A \otimes Id}{\begin{array}{l}\text{Mix value } \\ \text{vector across} \\ \text{tokens to} \\ \text{compute result} \\ \text{vectors} \\ (r_i = \sum_j{A_jv_j})\end{array}} . \frac{ Id \otimes W_v}{\begin{array}{l}\text{Compute value }\\ \text{vector for each} \\ \text{token} \\ (v_i = W_vx_i) \end{array}}
+$$
+
+This can be collapsed as 
+
+$$
+h(x) = \frac{ A \otimes W_oW_v}{\begin{array}{l}\text{A mixes tokens} \\ \text{while } W_o W_V \text{ acts on each vector} \\ \text{independently} \end{array}}. x
+$$
+
+Typically one compures the keys $k_i = W_Kx_i$, computes the query $q_i = W_Qx_i$ and then computes the attention pattern from the dot product of each key and query vector $A = \text{softmax}(q^Tk)$. This can be represented mathematically as 
+
+$A = \text{softmax}(x^TW_Q^TW_kx)$
+
+### Observation About Attention Heads
+
+A major benefit of rewriting attention heads in this format is it helps to understand
+- Attention head moves information from the residual stream of one token to another. A collory of this is that the residual vector space - which is often interpreted as "contextual word embedding" - will generate linear subspaces corresponding to information copied from other tokens and not directly about the present token
+- An attention head is really applying two linear operations, A and $W_OW_V$, which operates on different dimensions and acts independently. A governs which token information is moved from where to where. $W_OW_V$ governs which information is read from source token and it is written to the destination token
+- A is the only non linear part of this equation (Being computed using softmax). This means if we fix A, the attention pattern is fixed, and without it is half linear in a sense, since per token linear operation is constant
+- $W_Q$ and $W_K$ always operate together. They are never independent. Similarly $W_O$ and $W_V$ also operate together. Although they are parameterised as a separate matrix $W_Q^TW_K$ and $W_OW_V$ they can always be thought as a low rank matrix. This means key, query and value are by products of computing low rank matrices. One can reparameterize both factors of the low rank matrices to create different vectors which can still function identically. Because $W_OW_V$ and $W_QW_K$ always operate together we like to define variables representing these combined matrices, $W_{OV} = W_OW_V$ and $W_{QK} = W_Q^TW_K$
+- Products of attention heads behave much like attention heads themselves. By the distributive property, $(A^{h_2} \otimes W_{OV}^{h_2}).(A^{h_1} \otimes W^{h1}_{OV}) = (A^{h_1}A^{h_2}) \otimes (W_{OV}^{h_2}W_{OV}^{h_1})$. The result of this product results into

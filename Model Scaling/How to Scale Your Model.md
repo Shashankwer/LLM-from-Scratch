@@ -17,3 +17,4 @@ The goal of "model scaling" is to be able to increase the number of chips used f
 The goal of this article and the reference links is ti understand how TPU and GPU work and how transformer architecture has evolved to perform well on current hardware.  
 
 ![Transformer Architecture](./transformer.png)
+
