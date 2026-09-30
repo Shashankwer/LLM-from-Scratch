@@ -108,4 +108,61 @@ A major benefit of rewriting attention heads in this format is it helps to under
 - An attention head is really applying two linear operations, A and $W_OW_V$, which operates on different dimensions and acts independently. A governs which token information is moved from where to where. $W_OW_V$ governs which information is read from source token and it is written to the destination token
 - A is the only non linear part of this equation (Being computed using softmax). This means if we fix A, the attention pattern is fixed, and without it is half linear in a sense, since per token linear operation is constant
 - $W_Q$ and $W_K$ always operate together. They are never independent. Similarly $W_O$ and $W_V$ also operate together. Although they are parameterised as a separate matrix $W_Q^TW_K$ and $W_OW_V$ they can always be thought as a low rank matrix. This means key, query and value are by products of computing low rank matrices. One can reparameterize both factors of the low rank matrices to create different vectors which can still function identically. Because $W_OW_V$ and $W_QW_K$ always operate together we like to define variables representing these combined matrices, $W_{OV} = W_OW_V$ and $W_{QK} = W_Q^TW_K$
-- Products of attention heads behave much like attention heads themselves. By the distributive property, $(A^{h_2} \otimes W_{OV}^{h_2}).(A^{h_1} \otimes W^{h1}{OV}) = (A^{h_1}A^{h_2}) \otimes (W_{OV}^{h_2}W_{OV}^{h_1})$. The result of this product results into
+- Products of attention heads behave much like attention heads themselves. By the distributive property, $(A^{h_2} \otimes W_{OV}^{h_2}).(A^{h_1} \otimes W^{h1}{OV}) = (A^{h_1}A^{h_2}) \otimes (W_{OV}^{h_2}W_{OV}^{h_1})$. The result of this product results into two heads $A^{h_1}A^{h_2}$ and an output value matrix $W_{OV}^{h_2}W_{OV}^{h_1}$ which can also be called as a virtual attention heads
+
+
+# Zero Layer Transformer
+
+Consider a simple model. The model takes a token, embeds it, unembeds it to produce logits predicting the next token:
+
+$T = W_U W_E$
+
+Since the model cannot move the information from other tokens we are simply predicting the next token from the present token. This means that the optimal behavior of $W_UW_E$ is to approximate the bigram log-likelihood. 
+
+This is relevant to transformers more generally. Terms of the form $W_UW_E$ will occur in the expanded form equations for every transforer, corresponding to the "direct path" where a token embedding flows directly down the residual stream to the unembedding, without going through the layers.  The only thing it can effect the is the bigram log likelihoods. Since other aspects of the model will predict parts of the bigram log-likelihood it wont exactly represent bigram statistics in larger models, but it does represent a kind of "residual". In particular, the $W_UW_E$ term seems to often help represent bigram statistics which arent described by more general grammatical rules, such as the fact the "Barack" is often followed by "Obama".
+
+# One-Layer Attention-Only Transformers
+
+One layer attention only transformers can be understood as an ensemble of a bigram model and several "skip-gram" models (affecting the probabilities of the sequences "A..BC" ) Intutively, this is because each attention head can selectively attend from the present token ("B") to previous token ("A") and copy information to adjust probability of the possible next tokens ("C")
+
+The goal of this section is rigorously show this correspondence, and demonstrate how to convert the raw weights of a transformer into interpretable tables of skip-trigram probability adjustments
+
+### Detection by Induction
+
+1. The Path Expansion Trick
+
+One layer token embedding consist of token embedding, followed by an attention layer (applied indenpendently to the attention heads) and finally unembeddings
+
+- Token Embedding: $x_0 = W_Et$
+- Each attention head `h` is run and added to the residual sum : $x_1 = x_0 + \sum_{h \in H}h(x_0)$
+- Final logits are produced by adding in the unembedding: $T(t) = W_Ux_1$
+
+Using the tensor noation and the alternative representation of the attention heads we can represent transformers as the product of three terms
+
+$$ T = Id \otimes W_U . (Id + \sum_{h \in H_1} A^{h} \otimes W^{h}_{OV}). Id \otimes W_E  \text{   ... (i)}$$
+
+
+Where first term $Id \otimes W_U$ is the token unembedding mapping the residual stream vectors to logits
+
+$(Id + \sum_{h \in H_1} A^{h} \otimes W^{h}_{OV})$ is the attention layer with multiple heads. The result of each is added to the residual stream
+
+$Id \otimes W_E$: The input token embeddings mapping the tokens to the residual stream of the vectors
+
+Where the attention value $A^h$ corresponds to 
+
+$A^h = \text{softmax}^*(t^T.W_E^TW_{QK}^hW_E.t)$
+
+Attention pattern logits are produced by multiplying pairs of tokens through different sides of $W_{QK}^h$
+
+If we expand the equation (i) we get
+
+$$ T = Id \otimes W_UW_E + \sum_{h \in E} A^h \otimes (W_UW^{h}_{OV}W_E)$$
+
+The first part of the above residual maps the to the bigram statistics: $\text{direct path}$
+
+The second term (Attention head) terms describe the effecs of attention heads in linking input tokens to logits. $A^h$ describes which tokens attend to while $W_UW^{h}_{OV}W_E$ describes how each token changes if logits if attended to.
+
+The $\text{direct path}$ is the same term as seen in zero layer transformer. As it doesnt move information between positions it simply donates the bigram statistics. 
+
+### Understanding Attention Head terms: 
+
